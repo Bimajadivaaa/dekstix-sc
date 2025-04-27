@@ -6,81 +6,64 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-contract EventTicketingNFT is ERC721URIStorage, Ownable {
+import "./interfaces/IEventTicketingNFT.sol";
+import "./interfaces/ITicketTypes.sol";
+import "./libraries/TicketUtils.sol";
+import "./libraries/EventUtils.sol";
+import "./structs/EventStructs.sol";
+import "./structs/TicketStructs.sol";
+
+// Custom errors
+error NotAuthorized();
+error TicketNotUsed();
+error EventNotActive();
+error InvalidCode();
+error EventNotExist();
+error TicketAlreadyUsed();
+error InsufficientPayment();
+error NoCodeGenerated();
+error TicketNotAvailable();
+
+contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
     using Counters for Counters.Counter;
     using Strings for uint256;
+    using EventUtils for mapping(uint256 => EventStructs.EventStorage);
+    using TicketUtils for uint256;
     
     Counters.Counter private _eventIds;
     Counters.Counter private _tokenIds;
     Counters.Counter private _codeIds;
 
-    enum TicketType { STANDARD, PREMIUM, VIP }
-
-    struct Event {
-        string name;
-        string description;
-        string location;
-        string imageURI;
-        uint256 date;
-        uint256 startTime;
-        uint256 endTime;
-        bool isActive;
-        uint256 remainingTickets;
-        mapping(uint8 => uint256) ticketPrices;
-    }
-
-    struct Ticket {
-        uint256 eventId;
-        TicketType ticketType;
-        bool isListed;
-        bool isUsed;
-        bytes32 uniqueCodeHash;
-    }
-
-    struct CodeStatus {
-        bool isValid;
-        bool isUsed;
-        uint256 tokenId;
-        address owner;
-    }
-
-    // Base URI untuk metadata
+    // Base URI for metadata
     string private _baseTokenURI;
 
-    // Mapping dari eventId ke struct Event
-    mapping(uint256 => Event) private events;
+    // Mapping from eventId to struct Event
+    mapping(uint256 => EventStructs.EventStorage) private events;
     
-    // Mapping dari tokenId ke informasi tiket
-    mapping(uint256 => Ticket) public tickets;
+    // Mapping from tokenId to ticket information
+    mapping(uint256 => TicketStructs.Ticket) public tickets;
     
-    // Mapping dari code hash ke status kode
-    mapping(bytes32 => CodeStatus) private codes;
+    // Mapping from code hash to code status
+    mapping(bytes32 => TicketStructs.CodeStatus) private codes;
     
-    // Mapping dari tokenId ke kode tiket
+    // Mapping from tokenId to ticket code
     mapping(uint256 => string) private ticketCodes;
-    
-    // Events
-    event EventCreated(uint256 indexed eventId, string name, uint256 date);
-    event TicketPriceSet(uint256 indexed eventId, TicketType ticketType, uint256 price);
-    event TicketMinted(uint256 indexed tokenId, uint256 indexed eventId, address indexed owner, TicketType ticketType);
-    event TicketPurchased(uint256 indexed tokenId, uint256 indexed eventId, address indexed buyer, uint256 price);
-    event TicketUsed(uint256 indexed tokenId, uint256 indexed eventId);
-    event CodeVerified(uint256 indexed tokenId, uint256 indexed eventId, bool isValid, bool isUsed);
 
     constructor(address initialOwner) 
         ERC721("Event Ticket", "TCKT")
         Ownable(initialOwner)
     {}
-    
-    function setBaseURI(string memory baseURI) public onlyOwner {
-        _baseTokenURI = baseURI;
-    }
-    
-    function _baseURI() internal view override returns (string memory) {
-        return _baseTokenURI;
+
+     modifier onlyValidEvent(uint256 eventId) {
+        if (eventId == 0 || eventId > _eventIds.current()) revert EventNotExist();
+        _;
     }
 
-    // Fungsi untuk membuat event baru
+    modifier onlyValidTicket(uint256 tokenId) {
+        if (tokenId == 0 || tokenId > _tokenIds.current()) revert EventNotExist();
+        _;
+    }
+
     function createEvent(
         string memory name,
         string memory description,
@@ -90,160 +73,113 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
         uint256 startTime,
         uint256 endTime,
         uint256 totalTickets
-    ) public onlyOwner returns (uint256) {
+    ) public override onlyOwner returns (uint256) {
         _eventIds.increment();
         uint256 newEventId = _eventIds.current();
         
-        Event storage newEvent = events[newEventId];
+        EventStructs.EventStorage storage newEvent = events[newEventId];
         newEvent.name = name;
         newEvent.description = description;
         newEvent.location = location;
         newEvent.imageURI = imageURI;
-        newEvent.date = date;
-        newEvent.startTime = startTime;
-        newEvent.endTime = endTime;
+        newEvent.date = uint96(date);
+        newEvent.startTime = uint96(startTime);
+        newEvent.endTime = uint96(endTime);
         newEvent.isActive = true;
-        newEvent.remainingTickets = totalTickets;
+        newEvent.remainingTickets = uint32(totalTickets);
+        newEvent.totalTickets = uint32(totalTickets);
         
-        // Set harga default untuk semua tipe tiket (dalam wei)
-        newEvent.ticketPrices[uint8(TicketType.STANDARD)] = 0.1 ether;
-        newEvent.ticketPrices[uint8(TicketType.PREMIUM)] = 0.2 ether;
-        newEvent.ticketPrices[uint8(TicketType.VIP)] = 1 ether;
+        // Set default prices for all ticket types (in wei)
+        newEvent.ticketPrices[uint8(ITicketTypes.TicketType.STANDARD)] = 0.0001 ether;
+        newEvent.ticketPrices[uint8(ITicketTypes.TicketType.PREMIUM)] = 0.0002 ether;
+        newEvent.ticketPrices[uint8(ITicketTypes.TicketType.VIP)] = 0.0003 ether;
         
         emit EventCreated(newEventId, name, date);
         return newEventId;
     }
-    
-    // Fungsi untuk mengatur harga tiket berdasarkan tipe
-    function setTicketPrice(uint256 eventId, TicketType ticketType, uint256 price) public onlyOwner {
-        require(eventId <= _eventIds.current(), "Event does not exist");
-        require(events[eventId].isActive, "Event is not active");
+
+    function _baseURI() internal view override returns (string memory) {
+        return _baseTokenURI;
+    }
+
+    function setBaseURI(string memory baseURI) public onlyOwner {
+        _baseTokenURI = baseURI;
+    }
+
+    function setTicketPrice(uint256 eventId, ITicketTypes.TicketType ticketType, uint256 price) external override onlyOwner {
+        if (eventId > _eventIds.current()) revert EventNotExist();
+        if (!events[eventId].isActive) revert EventNotActive();
         
         events[eventId].ticketPrices[uint8(ticketType)] = price;
-        
         emit TicketPriceSet(eventId, ticketType, price);
     }
-    
-    // Fungsi untuk melihat harga tiket berdasarkan tipe
-    function getTicketPrice(uint256 eventId, TicketType ticketType) public view returns (uint256) {
-        require(eventId <= _eventIds.current(), "Event does not exist");
+
+    function getTicketPrice(uint256 eventId, ITicketTypes.TicketType ticketType) external view override returns (uint256) {
+        if (eventId > _eventIds.current()) revert EventNotExist();
         return events[eventId].ticketPrices[uint8(ticketType)];
     }
 
-    // Fungsi untuk melihat informasi event
-    function getEventInfo(uint256 eventId) public view returns (
-        string memory name,
-        string memory description,
-        string memory location,
-        string memory imageURI,
-        uint256 date,
-        uint256 startTime,
-        uint256 endTime,
-        bool isActive,
-        uint256 remainingTickets
-    ) {
-        require(eventId <= _eventIds.current(), "Event does not exist");
-        Event storage eventInfo = events[eventId];
-        
-        return (
-            eventInfo.name,
-            eventInfo.description,
-            eventInfo.location,
-            eventInfo.imageURI,
-            eventInfo.date,
-            eventInfo.startTime,
-            eventInfo.endTime,
-            eventInfo.isActive,
-            eventInfo.remainingTickets
-        );
-    }
-    
-    // Fungsi untuk mengaktifkan/menonaktifkan event
-    function toggleEventStatus(uint256 eventId) public onlyOwner {
-        require(eventId <= _eventIds.current(), "Event does not exist");
-        events[eventId].isActive = !events[eventId].isActive;
-    }
-    
-    // Fungsi untuk membuat kode unik tiket
-    function generateUniqueCode(uint256 tokenId, uint256 eventId) private returns (string memory) {
-        _codeIds.increment();
-        uint256 timestamp = block.timestamp;
-        uint256 random = uint256(keccak256(abi.encodePacked(
-            tokenId,
-            eventId,
-            timestamp,
-            msg.sender,
-            _codeIds.current()
-        )));
-        
-        return string(abi.encodePacked(
-            "EVT",
-            eventId.toString(),
-            "-TKT",
-            tokenId.toString(),
-            "-",
-            uint256(random % 1000000).toString()
-        ));
+    function getEventInfo(uint256 eventId) external view override returns (EventStructs.EventDetails memory) {
+        if (eventId > _eventIds.current()) revert EventNotExist();
+        return events.getEventDetails(eventId);
     }
 
-    // Fungsi untuk mencetak tiket oleh owner
-    function mintTicket(
-        uint256 eventId, 
-        TicketType ticketType, 
-        string memory tokenURI
-    ) public onlyOwner returns (uint256) {
-        require(eventId <= _eventIds.current(), "Event does not exist");
-        require(events[eventId].isActive, "Event is not active");
-        require(events[eventId].remainingTickets > 0, "No tickets remaining");
+    function toggleEventStatus(uint256 eventId) external override onlyOwner {
+        if (eventId > _eventIds.current()) revert EventNotExist();
+        events[eventId].isActive = !events[eventId].isActive;
+    }
+
+    function mintTicket(uint256 eventId, ITicketTypes.TicketType ticketType, string memory tokenURI) external override onlyOwner returns (uint256) {
+        if (eventId > _eventIds.current()) revert EventNotExist();
+        if (!events[eventId].isActive) revert EventNotActive();
         
         _tokenIds.increment();
         uint256 newTokenId = _tokenIds.current();
 
         _safeMint(msg.sender, newTokenId);
-        
-        // Jika VIP atau tokenURI tidak kosong, set URI kustom
-        if (ticketType == TicketType.VIP || bytes(tokenURI).length > 0) {
+        if (bytes(tokenURI).length > 0) {
             _setTokenURI(newTokenId, tokenURI);
         }
-        
-        tickets[newTokenId] = Ticket({
+
+        tickets[newTokenId] = TicketStructs.Ticket({
             eventId: eventId,
             ticketType: ticketType,
             isListed: true,
             isUsed: false,
-            uniqueCodeHash: bytes32(0)
+            uniqueCodeHash: bytes32(0),
+            purchaser: address(0),
+            purchaseTime: 0
         });
-        
-        // Kurangi jumlah tiket yang tersisa
-        events[eventId].remainingTickets--;
 
         emit TicketMinted(newTokenId, eventId, msg.sender, ticketType);
         return newTokenId;
     }
 
-    // Fungsi untuk membeli tiket
-    function buyTicket(uint256 tokenId) public payable {
-        require(tokenId <= _tokenIds.current(), "Ticket does not exist");
-        require(tickets[tokenId].isListed, "Ticket is not listed for sale");
-        require(!tickets[tokenId].isUsed, "Ticket has been used");
+    function buyTicket(uint256 tokenId) external override payable {
+        if (tokenId > _tokenIds.current()) revert EventNotExist();
+        if (!tickets[tokenId].isListed) revert TicketNotAvailable();
+        if (tickets[tokenId].isUsed) revert TicketAlreadyUsed();
         
         uint256 eventId = tickets[tokenId].eventId;
-        require(events[eventId].isActive, "Event is not active");
+        if (!events[eventId].isActive) revert EventNotActive();
         
         uint256 price = events[eventId].ticketPrices[uint8(tickets[tokenId].ticketType)];
-        require(msg.value >= price, "Insufficient payment");
+        if (msg.value < price) revert InsufficientPayment();
 
         address payable owner = payable(ownerOf(tokenId));
         owner.transfer(msg.value);
 
         _transfer(owner, msg.sender, tokenId);
         tickets[tokenId].isListed = false;
+        tickets[tokenId].purchaser = msg.sender;
+        tickets[tokenId].purchaseTime = uint96(block.timestamp);
+        
+        events[eventId].remainingTickets--;
 
         emit TicketPurchased(tokenId, eventId, msg.sender, msg.value);
     }
 
-    // Fungsi untuk melihat semua tiket yang tersedia untuk dijual
-    function getListedTickets(uint256 eventId) public view returns (uint256[] memory) {
+    function getListedTickets(uint256 eventId) external view override returns (uint256[] memory) {
         uint256 totalSupply = _tokenIds.current();
         uint256 listedCount = 0;
 
@@ -266,23 +202,29 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
         return listedTickets;
     }
 
-    // Fungsi untuk menggunakan tiket dan mendapatkan kode unik
-    function useTicket(uint256 tokenId) public {
-        require(ownerOf(tokenId) == msg.sender, "Not the ticket owner");
-        require(!tickets[tokenId].isUsed, "Ticket already used");
+    function useTicket(uint256 tokenId) external override {
+        if (ownerOf(tokenId) != msg.sender) revert NotAuthorized();
+        if (tickets[tokenId].isUsed) revert TicketAlreadyUsed();
         
         uint256 eventId = tickets[tokenId].eventId;
-        require(events[eventId].isActive, "Event is not active");
+        if (!events[eventId].isActive) revert EventNotActive();
 
-        string memory uniqueCode = generateUniqueCode(tokenId, eventId);
+        _codeIds.increment();
+        string memory uniqueCode = TicketUtils.generateUniqueCode(
+            tokenId,
+            eventId,
+            _codeIds.current(),
+            msg.sender,
+            block.timestamp
+        );
+        
         bytes32 codeHash = keccak256(abi.encodePacked(uniqueCode));
         
         tickets[tokenId].uniqueCodeHash = codeHash;
         tickets[tokenId].isUsed = true;
-        
         ticketCodes[tokenId] = uniqueCode;
         
-        codes[codeHash] = CodeStatus({
+        codes[codeHash] = TicketStructs.CodeStatus({
             isValid: true,
             isUsed: false,
             tokenId: tokenId,
@@ -292,47 +234,53 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
         emit TicketUsed(tokenId, eventId);
     }
 
-    // Fungsi untuk memverifikasi kode tiket (oleh penyelenggara event/owner)
-    function verifyCode(string memory code) public onlyOwner returns (bool) {
+    function verifyCode(string memory code) external override onlyOwner returns (bool) {
         bytes32 codeHash = keccak256(abi.encodePacked(code));
-        CodeStatus memory status = codes[codeHash];
+        TicketStructs.CodeStatus storage status = codes[codeHash];
         
-        require(status.isValid, "Invalid code");
-        require(!status.isUsed, "Code has been used");
+        if (!status.isValid) revert InvalidCode();
+        if (status.isUsed) revert TicketAlreadyUsed();
         
         uint256 tokenId = status.tokenId;
         uint256 eventId = tickets[tokenId].eventId;
 
-        codes[codeHash].isUsed = true;
+        status.isUsed = true;
         
         emit CodeVerified(tokenId, eventId, true, true);
         return true;
     }
 
-    // Fungsi untuk mendapatkan kode tiket (hanya oleh pemilik tiket)
-    function getTicketCode(uint256 tokenId) public view returns (string memory) {
-        require(ownerOf(tokenId) == msg.sender, "Only ticket owner can view code");
-        require(tickets[tokenId].isUsed, "Ticket not used yet");
+    function getTicketCode(uint256 tokenId) external view override returns (string memory) {
+        if (tokenId > _tokenIds.current()) revert EventNotExist();
+        
+        bool isOwner = ownerOf(tokenId) == msg.sender;
+        bool isPurchaser = tickets[tokenId].purchaser == msg.sender;
+        if (!isOwner && !isPurchaser) revert NotAuthorized();
+        
+        if (!tickets[tokenId].isUsed) revert TicketNotUsed();
+        
+        bytes memory code = bytes(ticketCodes[tokenId]);
+        if (code.length == 0) revert NoCodeGenerated();
+        
         return ticketCodes[tokenId];
     }
 
-    // Fungsi untuk memeriksa apakah tiket sudah digunakan
-    function isTicketUsed(uint256 tokenId) public view returns (bool) {
+    function isTicketUsed(uint256 tokenId) external view override returns (bool) {
         return tickets[tokenId].isUsed;
     }
-    
-    // Fungsi untuk mendapatkan tipe tiket
-    function getTicketType(uint256 tokenId) public view returns (TicketType) {
+
+    function getTicketType(uint256 tokenId) external view override returns (ITicketTypes.TicketType) {
         return tickets[tokenId].ticketType;
     }
-    
-    // Fungsi untuk mendapatkan semua tiket berdasarkan tipe dan event
-    function getTicketsByTypeAndEvent(uint256 eventId, TicketType ticketType) public view returns (uint256[] memory) {
+
+    function getTicketsByTypeAndEvent(uint256 eventId, ITicketTypes.TicketType ticketType) external view override returns (uint256[] memory) {
         uint256 totalSupply = _tokenIds.current();
         uint256 typeCount = 0;
 
         for (uint256 i = 1; i <= totalSupply; i++) {
-            if (tickets[i].eventId == eventId && tickets[i].ticketType == ticketType) {
+            if (tickets[i].eventId == eventId && 
+                tickets[i].ticketType == ticketType && 
+                tickets[i].isListed) {
                 typeCount++;
             }
         }
@@ -341,7 +289,9 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
         uint256 currentIndex = 0;
 
         for (uint256 i = 1; i <= totalSupply; i++) {
-            if (tickets[i].eventId == eventId && tickets[i].ticketType == ticketType) {
+            if (tickets[i].eventId == eventId && 
+                tickets[i].ticketType == ticketType && 
+                tickets[i].isListed) {
                 filteredTickets[currentIndex] = i;
                 currentIndex++;
             }
@@ -349,21 +299,19 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
 
         return filteredTickets;
     }
-    
-    // Fungsi untuk mendapatkan semua event
-    function getAllEvents() public view returns (uint256[] memory) {
+
+    function getAllEvents() external view override returns (EventStructs.EventDetails[] memory) {
         uint256 eventCount = _eventIds.current();
-        uint256[] memory allEvents = new uint256[](eventCount);
+        EventStructs.EventDetails[] memory allEvents = new EventStructs.EventDetails[](eventCount);
         
         for (uint256 i = 1; i <= eventCount; i++) {
-            allEvents[i-1] = i;
+            allEvents[i-1] = events.getEventDetails(i);
         }
         
         return allEvents;
     }
-    
-    // Fungsi untuk mendapatkan semua event aktif
-    function getActiveEvents() public view returns (uint256[] memory) {
+
+    function getActiveEvents() external view override returns (EventStructs.EventDetails[] memory) {
         uint256 eventCount = _eventIds.current();
         uint256 activeCount = 0;
         
@@ -373,16 +321,91 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable {
             }
         }
         
-        uint256[] memory activeEvents = new uint256[](activeCount);
+        EventStructs.EventDetails[] memory activeEvents = new EventStructs.EventDetails[](activeCount);
         uint256 currentIndex = 0;
         
         for (uint256 i = 1; i <= eventCount; i++) {
             if (events[i].isActive) {
-                activeEvents[currentIndex] = i;
+                activeEvents[currentIndex] = events.getEventDetails(i);
                 currentIndex++;
             }
         }
         
         return activeEvents;
+    }
+
+    function getMyNFTs() external view override returns (TicketStructs.TicketWithNFT[] memory) {
+        uint256 balance = balanceOf(msg.sender);
+        if (balance == 0) {
+            return new TicketStructs.TicketWithNFT[](0);
+        }
+        
+        TicketStructs.TicketWithNFT[] memory myNFTs = new TicketStructs.TicketWithNFT[](balance);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 1; i <= _tokenIds.current(); i++) {
+            if (ownerOf(i) == msg.sender) {
+                uint256 eventId = tickets[i].eventId;
+                myNFTs[currentIndex] = TicketStructs.TicketWithNFT({
+                    tokenId: i,
+                    eventId: eventId,
+                    eventName: events[eventId].name,
+                    ticketType: tickets[i].ticketType,
+                    tokenURI: tokenURI(i)
+                });
+                currentIndex++;
+            }
+        }
+        
+        return myNFTs;
+    }
+
+    function isEventExpired(uint256 eventId) external view override returns (bool) {
+        if (eventId > _eventIds.current()) revert EventNotExist();
+        return block.timestamp > uint256(events[eventId].date);
+    }
+
+    function getMyPurchaseHistory() external view override returns (TicketStructs.PurchaseHistory[] memory) {
+        uint256 totalSupply = _tokenIds.current();
+        uint256 purchaseCount = 0;
+        
+        for (uint256 i = 1; i <= totalSupply; i++) {
+            if (tickets[i].purchaser == msg.sender || ownerOf(i) == msg.sender) {
+                purchaseCount++;
+            }
+        }
+        
+        if (purchaseCount == 0) {
+            return new TicketStructs.PurchaseHistory[](0);
+        }
+        
+        TicketStructs.PurchaseHistory[] memory history = new TicketStructs.PurchaseHistory[](purchaseCount);
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 1; i <= totalSupply; i++) {
+            if (tickets[i].purchaser == msg.sender || ownerOf(i) == msg.sender) {
+                uint256 eventId = tickets[i].eventId;
+                
+                string memory code = "";
+                if ((ownerOf(i) == msg.sender || tickets[i].purchaser == msg.sender) && tickets[i].isUsed) {
+                    code = ticketCodes[i];
+                }
+                
+                history[currentIndex] = TicketStructs.PurchaseHistory({
+                    tokenId: i,
+                    eventId: eventId,
+                    eventName: events[eventId].name,
+                    eventDate: uint256(events[eventId].date),
+                    isExpired: block.timestamp > uint256(events[eventId].date),
+                    isUsed: tickets[i].isUsed,
+                    ticketType: tickets[i].ticketType,
+                    ticketCode: code,
+                    tokenURI: tokenURI(i)
+                });
+                currentIndex++;
+            }
+        }
+        
+        return history;
     }
 }

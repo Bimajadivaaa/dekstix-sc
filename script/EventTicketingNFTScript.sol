@@ -1,34 +1,36 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Script, console} from "forge-std/Script.sol";
-import {EventTicketingNFT} from "../src/EventTicketingNFT.sol";
+import "forge-std/Script.sol";
+import "../src/EventTicketingNFT.sol";
 
 contract DeployEventTicketingNFT is Script {
     function run() external {
-        // Ambil private key dari environment variable
+        // Get deployer private key
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
         
-        // Ambil owner address dari environment variable atau gunakan address dari private key
-        address initialOwner;
-        try vm.envAddress("OWNER_ADDRESS") returns (address ownerAddr) {
-            initialOwner = ownerAddr;
-        } catch {
-            // Jika OWNER_ADDRESS tidak diatur, gunakan address dari private key
-            initialOwner = vm.addr(deployerPrivateKey);
-        }
+        console.log("Deploying contracts with address:", deployer);
         
-        console.log("Deploying EventTicketingNFT with owner:", initialOwner);
-        
-        // Mulai broadcast transaksi
+        // Start broadcasting
         vm.startBroadcast(deployerPrivateKey);
+
+        // Deploy EventTicketingNFT
+        EventTicketingNFT eventTicketing = new EventTicketingNFT(deployer);
         
-        // Deploy kontrak
-        EventTicketingNFT nft = new EventTicketingNFT(initialOwner);
-        
-        // Akhiri broadcast
+        // Set base URI for NFT metadata
+        // eventTicketing.setBaseURI("https://api.dekstix.com/metadata/");
+
+        // Stop broadcasting
         vm.stopBroadcast();
+
+        // Log deployment info
+        console.log("Deployment completed!");
+        console.log("EventTicketingNFT deployed at:", address(eventTicketing));
+        console.log("Owner address:", deployer);
         
-        console.log("EventTicketingNFT deployed at:", address(nft));
+        // Verify deployment
+        console.log("Verify contract on Etherscan with:");
+        console.log("forge verify-contract", address(eventTicketing), "EventTicketingNFT", "--chain-id 11155111");
     }
 }
