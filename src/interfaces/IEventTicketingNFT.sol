@@ -21,7 +21,8 @@ interface IEventTicketingNFT {
         uint256 date,
         uint256 startTime,
         uint256 endTime,
-        uint256 totalTickets
+        uint256 totalTickets,
+        string[] memory speakers
     ) external returns (uint256);
 
     function setTicketPrice(uint256 eventId, ITicketTypes.TicketType ticketType, uint256 price) external;
@@ -42,4 +43,24 @@ interface IEventTicketingNFT {
     function getMyNFTs() external view returns (TicketStructs.TicketWithNFT[] memory);
     function isEventExpired(uint256 eventId) external view returns (bool);
     function getMyPurchaseHistory() external view returns (TicketStructs.PurchaseHistory[] memory);
+    function mintAndBuyVIPTicket(uint256 eventId, string memory tokenURI) external payable returns (uint256);
+    function batchMintTickets(
+        uint256 eventId,
+        ITicketTypes.TicketType ticketType,
+        string memory tokenURI,
+        uint256 quantity
+    ) external returns (uint256[] memory);
+    function isTicketCodeExpired(uint256 tokenId) external view returns (bool);
+    
+    function getEventTicketStock(uint256 eventId) external view returns (
+        uint256 totalTickets,
+        uint256 remainingTickets,
+        uint256 soldTickets
+    );
+    
+    function getEventTicketStockByType(uint256 eventId, ITicketTypes.TicketType ticketType) external view returns (
+        uint256 totalTickets,
+        uint256 remainingTickets,
+        uint256 soldTickets
+    );
 }

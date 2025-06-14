@@ -21,7 +21,9 @@ library EventUtils {
             endTime: uint256(eventInfo.endTime),
             isActive: eventInfo.isActive,
             remainingTickets: uint256(eventInfo.remainingTickets),
-            totalTickets: uint256(eventInfo.totalTickets)
+            totalTickets: uint256(eventInfo.totalTickets),
+            soldTickets: uint256(eventInfo.soldTickets),
+            speakers: eventInfo.speakers
         });
     }
 }

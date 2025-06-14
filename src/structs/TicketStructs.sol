@@ -11,7 +11,7 @@ library TicketStructs {
         bool isUsed;
         bytes32 uniqueCodeHash;
         address purchaser;
-        uint96 purchaseTime; // Changed from uint256 to uint96
+        uint96 purchaseTime;
     }
 
     struct CodeStatus {
@@ -21,7 +21,6 @@ library TicketStructs {
         address owner;
     }
 
-    // Struct for user's purchase history
     struct PurchaseHistory {
         uint256 tokenId;
         uint256 eventId;
@@ -34,7 +33,6 @@ library TicketStructs {
         string tokenURI;
     }
 
-    // Struct for ticket with NFT data
     struct TicketWithNFT {
         uint256 tokenId;
         uint256 eventId;

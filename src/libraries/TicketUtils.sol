@@ -22,15 +22,13 @@ library TicketUtils {
             sender,
             codeId
         )));
-        
-        return string(abi.encodePacked(
-            "EVT",
-            eventId.toString(),
-            "-TKT",
-            tokenId.toString(),
-            "-",
-            (random % 1000000).toString()
-        ));
+        bytes memory chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        bytes memory code = new bytes(6);
+        for (uint i = 0; i < 6; i++) {
+            code[i] = chars[random % chars.length];
+            random /= chars.length;
+        }
+        return string(code);
     }
 
     function toHexString(uint256 value, uint256 length) internal pure returns (string memory) {
