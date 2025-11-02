@@ -155,6 +155,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         });
 
         events[eventId].remainingTickets--;
+        events[eventId].totalTickets--;
 
         emit TicketMinted(newTokenId, eventId, msg.sender, ticketType);
         return newTokenId;
@@ -196,6 +197,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         }
         
         events[eventId].remainingTickets -= uint32(quantity);
+        events[eventId].totalTickets -= uint32(quantity);
         
         return tokenIds;
     }
@@ -219,7 +221,6 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         tickets[tokenId].purchaser = msg.sender;
         tickets[tokenId].purchaseTime = uint96(block.timestamp);
         
-        events[eventId].remainingTickets--;
         events[eventId].soldTickets++;
 
         emit TicketPurchased(tokenId, eventId, msg.sender, msg.value);
@@ -354,6 +355,10 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
             EventStructs.EventDetails memory details = events.getEventDetails(i);
             details.soldTickets = events[i].soldTickets;
             details.speakers = events[i].speakers;
+            
+            // Calculate actual remaining tickets available for purchase
+            details.remainingTickets = events[i].totalTickets - events[i].soldTickets;
+            
             allEvents[i-1] = details;
         }
         
@@ -375,7 +380,14 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         
         for (uint256 i = 1; i <= eventCount; i++) {
             if (events[i].isActive) {
-                activeEvents[currentIndex] = events.getEventDetails(i);
+                EventStructs.EventDetails memory details = events.getEventDetails(i);
+                details.soldTickets = events[i].soldTickets;
+                details.speakers = events[i].speakers;
+                
+                // Calculate actual remaining tickets available for purchase
+                details.remainingTickets = events[i].totalTickets - events[i].soldTickets;
+                
+                activeEvents[currentIndex] = details;
                 currentIndex++;
             }
         }
@@ -554,7 +566,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
             purchaser: msg.sender,
             purchaseTime: uint96(block.timestamp)
         });
-        events[eventId].remainingTickets--;
+        events[eventId].totalTickets--;
         events[eventId].soldTickets++;
         emit TicketMinted(newTokenId, eventId, msg.sender, ITicketTypes.TicketType.VIP);
         emit TicketPurchased(newTokenId, eventId, msg.sender, msg.value);
