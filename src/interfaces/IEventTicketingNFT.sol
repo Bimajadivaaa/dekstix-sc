@@ -11,7 +11,7 @@ interface IEventTicketingNFT {
     event TicketMinted(uint256 indexed tokenId, uint256 indexed eventId, address indexed owner, ITicketTypes.TicketType ticketType);
     event TicketPurchased(uint256 indexed tokenId, uint256 indexed eventId, address indexed buyer, uint256 price);
     event TicketUsed(uint256 indexed tokenId, uint256 indexed eventId);
-    event CodeVerified(uint256 indexed tokenId, uint256 indexed eventId, bool isValid, bool isUsed);
+    event CodeVerified(uint256 indexed tokenId, uint256 indexed eventId, bool isValid, bool isUsed, ITicketTypes.TicketType ticketType);
 
     function createEvent(
         string memory name,
@@ -33,7 +33,7 @@ interface IEventTicketingNFT {
     function buyTicket(uint256 tokenId) external payable;
     function getListedTickets(uint256 eventId) external view returns (uint256[] memory);
     function useTicket(uint256 tokenId) external;
-    function verifyCode(string memory code) external returns (bool);
+    function verifyCode(string memory code) external returns (bool isValid, ITicketTypes.TicketType ticketType);
     function getTicketCode(uint256 tokenId) external view returns (string memory);
     function isTicketUsed(uint256 tokenId) external view returns (bool);
     function getTicketType(uint256 tokenId) external view returns (ITicketTypes.TicketType);
@@ -62,5 +62,14 @@ interface IEventTicketingNFT {
         uint256 totalTickets,
         uint256 remainingTickets,
         uint256 soldTickets
+    );
+    
+    function getCodeInfo(string memory code) external view returns (
+        bool isValid,
+        bool isUsed,
+        string memory eventName,
+        ITicketTypes.TicketType ticketType,
+        uint256 tokenId,
+        uint256 eventId
     );
 }

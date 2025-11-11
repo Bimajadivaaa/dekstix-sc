@@ -19,6 +19,7 @@ error EventNotActive();
 error InvalidCode();
 error EventNotExist();
 error TicketAlreadyUsed();
+error TicketCodeAlreadyGenerated();
 error InsufficientPayment();
 error NoCodeGenerated();
 error TicketNotAvailable();
@@ -155,7 +156,6 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         });
 
         events[eventId].remainingTickets--;
-        events[eventId].totalTickets--;
 
         emit TicketMinted(newTokenId, eventId, msg.sender, ticketType);
         return newTokenId;
@@ -197,7 +197,6 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         }
         
         events[eventId].remainingTickets -= uint32(quantity);
-        events[eventId].totalTickets -= uint32(quantity);
         
         return tokenIds;
     }
@@ -251,7 +250,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
 
     function useTicket(uint256 tokenId) external override {
         if (ownerOf(tokenId) != msg.sender) revert NotAuthorized();
-        if (tickets[tokenId].isUsed) revert TicketAlreadyUsed();
+        if (tickets[tokenId].isUsed) revert TicketCodeAlreadyGenerated();
         
         uint256 eventId = tickets[tokenId].eventId;
         if (!events[eventId].isActive) revert EventNotActive();
@@ -281,7 +280,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         emit TicketUsed(tokenId, eventId);
     }
 
-    function verifyCode(string memory code) external override onlyOwner returns (bool) {
+    function verifyCode(string memory code) external override onlyOwner returns (bool isValid, ITicketTypes.TicketType ticketType) {
         bytes32 codeHash = keccak256(abi.encodePacked(code));
         TicketStructs.CodeStatus storage status = codes[codeHash];
         
@@ -290,11 +289,12 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
         
         uint256 tokenId = status.tokenId;
         uint256 eventId = tickets[tokenId].eventId;
+        ITicketTypes.TicketType ticketTypeResult = tickets[tokenId].ticketType;
 
         status.isUsed = true;
         
-        emit CodeVerified(tokenId, eventId, true, true);
-        return true;
+        emit CodeVerified(tokenId, eventId, true, true, ticketTypeResult);
+        return (true, ticketTypeResult);
     }
 
     function getTicketCode(uint256 tokenId) external view override returns (string memory) {
@@ -356,8 +356,8 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
             details.soldTickets = events[i].soldTickets;
             details.speakers = events[i].speakers;
             
-            // Calculate actual remaining tickets available for purchase
-            details.remainingTickets = events[i].totalTickets - events[i].soldTickets;
+            // Calculate actual remaining tickets available for purchase - use safe math to prevent underflow
+            details.remainingTickets = events[i].soldTickets > events[i].totalTickets ? 0 : events[i].totalTickets - events[i].soldTickets;
             
             allEvents[i-1] = details;
         }
@@ -384,8 +384,8 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
                 details.soldTickets = events[i].soldTickets;
                 details.speakers = events[i].speakers;
                 
-                // Calculate actual remaining tickets available for purchase
-                details.remainingTickets = events[i].totalTickets - events[i].soldTickets;
+                // Calculate actual remaining tickets available for purchase - use safe math to prevent underflow
+                details.remainingTickets = events[i].soldTickets > events[i].totalTickets ? 0 : events[i].totalTickets - events[i].soldTickets;
                 
                 activeEvents[currentIndex] = details;
                 currentIndex++;
@@ -455,7 +455,7 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
                     codeValidated = codes[codeHash].isUsed;
                 }
                 
-                bool expired = codeValidated || block.timestamp > uint256(events[eventId].date);
+                bool expired = block.timestamp > uint256(events[eventId].date);
                 history[currentIndex] = TicketStructs.PurchaseHistory({
                     tokenId: i,
                     eventId: eventId,
@@ -566,10 +566,38 @@ contract EventTicketingNFT is ERC721URIStorage, Ownable, IEventTicketingNFT {
             purchaser: msg.sender,
             purchaseTime: uint96(block.timestamp)
         });
-        events[eventId].totalTickets--;
+        events[eventId].remainingTickets--;
         events[eventId].soldTickets++;
         emit TicketMinted(newTokenId, eventId, msg.sender, ITicketTypes.TicketType.VIP);
         emit TicketPurchased(newTokenId, eventId, msg.sender, msg.value);
         return newTokenId;
+    }
+
+    function getCodeInfo(string memory code) external view override returns (
+        bool isValid,
+        bool isUsed,
+        string memory eventName,
+        ITicketTypes.TicketType ticketType,
+        uint256 tokenId,
+        uint256 eventId
+    ) {
+        bytes32 codeHash = keccak256(abi.encodePacked(code));
+        TicketStructs.CodeStatus storage status = codes[codeHash];
+        
+        if (!status.isValid) {
+            return (false, false, "", ITicketTypes.TicketType.STANDARD, 0, 0);
+        }
+        
+        uint256 ticketTokenId = status.tokenId;
+        uint256 ticketEventId = tickets[ticketTokenId].eventId;
+        
+        return (
+            status.isValid,
+            status.isUsed,
+            events[ticketEventId].name,
+            tickets[ticketTokenId].ticketType,
+            ticketTokenId,
+            ticketEventId
+        );
     }
 }
